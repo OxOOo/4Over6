@@ -1,7 +1,11 @@
 package com.a4over6.app.app;
 
+import android.content.Intent;
+import android.net.VpnService;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
+import android.view.View;
+import android.widget.Button;
 import android.widget.TextView;
 
 public class MainActivity extends AppCompatActivity {
@@ -19,6 +23,28 @@ public class MainActivity extends AppCompatActivity {
         // Example of a call to a native method
         TextView tv = (TextView) findViewById(R.id.sample_text);
         tv.setText(stringFromJNI());
+
+        Button btn = (Button)findViewById(R.id.button);
+        btn.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                Intent intent = VpnService.prepare(MainActivity.this);
+                if (intent != null) {
+                    startActivityForResult(intent, 0);
+                } else {
+                    onActivityResult(0, RESULT_OK, null);
+                }
+            }
+        });
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (resultCode == RESULT_OK) {
+            Intent intent = new Intent(this, VPNService.class);
+            startService(intent);
+        }
     }
 
     /**
