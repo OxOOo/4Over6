@@ -28,7 +28,7 @@ public class MyVpnService extends VpnService {
 //                builder.setSession();
                 ParcelFileDescriptor inter = builder.establish();
             }
-        }
+        };
 
         return Service.START_REDELIVER_INTENT;
     }
