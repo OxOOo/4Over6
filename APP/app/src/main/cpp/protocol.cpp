@@ -38,11 +38,16 @@ static int tunFd;
 static time_t last_hartbeat_from_server;
 static time_t last_hartbeat_to_server;
 
-void protocol_init(int _socketFd, int _commandReadFd, int _responseWriteFd)
+uint64_t in_bytes;
+uint64_t out_bytes;
+uint64_t in_packets;
+uint64_t out_packets;
+
+int protocol_init(int _socketFd, int _commandReadFd, int _responseWriteFd)
 {
     // 内存布局必须符合预期
-    assert( &(( (Message*)(void*)(0) )->type) - (uint8_t*)(0) == 4);
-    assert(sizeof(Message) == 5);
+    ASSERT( &(( (Message*)(void*)(0) )->type) - (uint8_t*)(0) == 4, fail);
+    ASSERT(sizeof(Message) == 5, fail);
 
     socketFd = _socketFd;
     commandReadFd = _commandReadFd;
@@ -53,6 +58,15 @@ void protocol_init(int _socketFd, int _commandReadFd, int _responseWriteFd)
     last_hartbeat_to_server = time(NULL);
 
     socket_nreads = 0;
+
+    in_bytes = 0;
+    out_bytes = 0;
+    in_packets = 0;
+    out_packets = 0;
+
+    return 0;
+    fail:
+    return -1;
 }
 
 int get_tun_fd()
@@ -60,33 +74,32 @@ int get_tun_fd()
     return tunFd;
 }
 
-void handle_tunel()
+int handle_tunel()
 {
     static uint8_t buffer[BUFFER_SIZE];
     ssize_t size = read(tunFd, buffer, BUFFER_SIZE);
-    ERROR_CHECK(size);
-    if (size == 0) return;
+    ERROR_CHECK(size, fail);
+    if (size == 0) return 0;
 
     Message msg;
     msg.length = sizeof(Message)+size;
     msg.type = PROTOCOL_PACKET_SEND;
-    ssize_t size1 = write(socketFd, &msg, sizeof(msg));
-    assert(size1 == sizeof(msg));
-    ssize_t size2 = write(socketFd, buffer, size);
-    assert(size2 == size);
+    ASSERT(write(socketFd, &msg, sizeof(msg)) == sizeof(msg), fail);
+    ASSERT(write(socketFd, buffer, size) == size, fail);
+    out_packets ++;
+    out_bytes += size;
 
-    // LOGD("handle_tunel size = %d, size1 = %d, size2 = %d", size, size1, size2);
+    return 0;
+    fail:
+    return -1;
 }
 
-void handle_socket()
+int handle_socket()
 {
-    LOGD("handle_socket");
-    LOGD("before socket_nreads = %d", socket_nreads);
-
     ssize_t size = recv(socketFd, socket_buffer+socket_nreads, BUFFER_SIZE-socket_nreads, MSG_DONTWAIT);
-    ERROR_CHECK(size);
+    ERROR_CHECK(size, fail);
     socket_nreads += size;
-    assert(socket_nreads >= 0);
+    ASSERT(socket_nreads >= 0, fail);
 
     LOGD("handle_socket socket_nreads=%d", socket_nreads);
 
@@ -114,45 +127,54 @@ void handle_socket()
             ptr = READ_IP(ptr, dns2);
             ptr = READ_IP(ptr, dns3);
 
-            assert(write(responseWriteFd, ip, 4) == 4);
-            assert(write(responseWriteFd, mask, 4) == 4);
-            assert(write(responseWriteFd, dns1, 4) == 4);
-            assert(write(responseWriteFd, dns2, 4) == 4);
-            assert(write(responseWriteFd, dns3, 4) == 4);
-            assert(write(responseWriteFd, &socketFd, 4) == 4);
+            ASSERT(write(responseWriteFd, ip, 4) == 4, fail);
+            ASSERT(write(responseWriteFd, mask, 4) == 4, fail);
+            ASSERT(write(responseWriteFd, dns1, 4) == 4, fail);
+            ASSERT(write(responseWriteFd, dns2, 4) == 4, fail);
+            ASSERT(write(responseWriteFd, dns3, 4) == 4, fail);
+            ASSERT(write(responseWriteFd, &socketFd, 4) == 4, fail);
         } else if (msg.type == PROTOCOL_HARTBEAT) {
             LOGV("PROTOCOL_HARTBEAT");
             last_hartbeat_from_server = time(NULL);
         } else if (msg.type == PROTOCOL_PACKET_RECV) {
             LOGV("PROTOCOL_PACKET_RECV");
-            write(tunFd, socket_buffer+sizeof(Message), msg.length);
+            if (tunFd >= 0) {
+                ASSERT(write(tunFd, socket_buffer+sizeof(Message), msg.length) == msg.length, fail);
+                in_bytes += msg.length;
+                in_packets ++;
+            } else {
+                LOGW("recved packet before set tunFd");
+            }
         } else {
             LOGW("unknow type = %d", msg.type);
+            ASSERT(false, fail);
         }
         memmove(socket_buffer, socket_buffer+msg.length, socket_nreads-msg.length);
-        LOGD("here1 socket_nreads=%d", socket_nreads);
         socket_nreads -= msg.length;
-        LOGD("here2 socket_nreads=%d", socket_nreads);
     }
+
+    return 0;
+    fail:
+    return -1;
 }
 
 int handle_command()
 {
     uint8_t command;
     ssize_t ret = read(commandReadFd, &command, 1);
-    ERROR_CHECK(ret);
-    if (ret != 1) return ret;
+    ERROR_CHECK(ret, fail);
+    ASSERT(ret == 1, fail);
+
     if (command == IPC_COMMAND_EXIT) {
         LOGV("IPC_COMMAND_EXIT");
-
-        return IPC_COMMAND_EXIT;
+        return 1;
     } else if (command == IPC_COMMAND_FETCH_CONFIG) {
         LOGV("IPC_COMMAND_FETCH_CONFIG");
 
         Message msg;
         msg.length = sizeof(Message);
         msg.type = PROTOCOL_IP_REQUEST;
-        assert(write(socketFd, &msg, sizeof(msg)) == sizeof(msg));
+        ASSERT(write(socketFd, &msg, sizeof(msg)) == sizeof(msg), fail);
     } else if (command == IPC_COMMAND_SET_TUN) {
         LOGV("IPC_COMMAND_SET_TUN");
 
@@ -160,13 +182,23 @@ int handle_command()
         int nreads = 0;
         while(nreads < 4) {
             ssize_t ret = read(commandReadFd, data+nreads, 4-nreads);
-            ERROR_CHECK(ret);
+            ERROR_CHECK(ret, fail);
             nreads += ret;
         }
         LOGV("tunFd = %d", tunFd);
-        assert(tunFd >= 0);
+        ASSERT(tunFd >= 0, fail);
+    } else if (command == IPC_COMMAND_FETCH_STATE) {
+        LOGV("IPC_COMMAND_FETCH_STATE");
+
+        ASSERT(write(responseWriteFd, &in_bytes, sizeof(uint64_t)) == sizeof(uint64_t), fail);
+        ASSERT(write(responseWriteFd, &out_bytes, sizeof(uint64_t)) == sizeof(uint64_t), fail);
+        ASSERT(write(responseWriteFd, &in_packets, sizeof(uint64_t)) == sizeof(uint64_t), fail);
+        ASSERT(write(responseWriteFd, &out_packets, sizeof(uint64_t)) == sizeof(uint64_t), fail);
     }
-    return command;
+
+    return 0;
+    fail:
+    return -1;
 }
 
 int handle_hartbeat()
@@ -177,9 +209,11 @@ int handle_hartbeat()
         Message msg;
         msg.length = sizeof(Message);
         msg.type = PROTOCOL_HARTBEAT;
-        write(socketFd, &msg, sizeof(msg));
+        ASSERT(write(socketFd, &msg, sizeof(msg)) == sizeof(msg), fail);
         last_hartbeat_to_server = now;
     }
 
     return 0;
+    fail:
+    return -1;
 }

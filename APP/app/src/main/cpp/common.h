@@ -10,7 +10,6 @@
 #include <stdio.h>
 #include <errno.h>
 #include <android/log.h>
-#include <cassert>
 
 #define LOGV(...) __android_log_print(ANDROID_LOG_VERBOSE, "vpn_backend", __VA_ARGS__);
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "vpn_backend", __VA_ARGS__);
@@ -18,13 +17,20 @@
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN, "vpn_backend", __VA_ARGS__);
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "vpn_backend", __VA_ARGS__);
 
-#define ERROR_CHECK(code) \
+#define ERROR_CHECK(code, exit_label) \
 { \
     int __ret = (code); \
     if (__ret < 0) { \
-        LOGE("error at %s:%d error=%s", __FILE__, __LINE__, strerror(errno));\
+        LOGE("error at %s:%d error=%s", __FILE__, __LINE__, strerror(errno)); \
+        goto exit_label; \
     } \
-    assert(__ret >= 0); \
+}
+#define ASSERT(cond, exit_label) \
+{ \
+    if (!(cond)) { \
+        LOGE("error at %s:%d [%s]", __FILE__, __LINE__, #cond);\
+        goto exit_label; \
+    } \
 }
 
 const char* READ_IP(const char* ptr, uint8_t ip[4]);

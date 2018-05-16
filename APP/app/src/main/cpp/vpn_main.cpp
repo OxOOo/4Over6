@@ -8,7 +8,6 @@
 #include <android/log.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include <assert.h>
 #include <sys/types.h>
 #include <unistd.h>
 #include <arpa/inet.h>
@@ -23,30 +22,32 @@ static int connectServer(const std::string hostname, int port) {
     struct sockaddr_in6 serv_addr;
 
     int socketFd = socket(AF_INET6, SOCK_STREAM, 0);
-    ERROR_CHECK(socketFd);
+    ERROR_CHECK(socketFd, fail2);
 
     memset((char *) &serv_addr, 0, sizeof(serv_addr));
     serv_addr.sin6_family = AF_INET6;
     serv_addr.sin6_port = htons((unsigned short) port);
-    ERROR_CHECK( inet_pton(AF_INET6, hostname.c_str(), &serv_addr.sin6_addr) );
+    ERROR_CHECK( inet_pton(AF_INET6, hostname.c_str(), &serv_addr.sin6_addr) , fail1);
 
-    ERROR_CHECK( connect(socketFd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) );
+    ERROR_CHECK( connect(socketFd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) , fail1);
 
     return socketFd;
+    fail1:
+    close(socketFd);
+    fail2:
+    return -1;
 }
 
 int vpn_main(const std::string hostname, int port, int commandReadFd, int responseWriteFd)
 {
-    LOGV("enter %s:%d", hostname.c_str(), port);
-
     int socketFd = connectServer(hostname, port);
-
     LOGV("socketFd = %d", socketFd);
-
-    protocol_init(socketFd, commandReadFd, responseWriteFd);
 
     vector<struct pollfd> fds;
     fds.reserve(1024);
+
+    ASSERT(socketFd >= 0, exit);
+    ASSERT( protocol_init(socketFd, commandReadFd, responseWriteFd) == 0, exit);
 
     for(;;) {
         fds.clear();
@@ -71,7 +72,7 @@ int vpn_main(const std::string hostname, int port, int commandReadFd, int respon
         }
 
         int ret = poll(fds.data(), fds.size(), 1000);
-        ERROR_CHECK(ret);
+        ERROR_CHECK(ret, exit);
         if (handle_hartbeat() != 0) {
             LOGI("exit because of hartbeat timeout");
             goto exit;
@@ -95,16 +96,20 @@ int vpn_main(const std::string hostname, int port, int commandReadFd, int respon
                 }
             }
             if (fds[i].fd == socketFd) {
-                handle_socket();
+                ASSERT( handle_socket() == 0, exit);
             }
             if (fds[i].fd == get_tun_fd()) {
-                handle_tunel();
+                ASSERT( handle_tunel() == 0, exit);
             }
         }
     }
     exit:
-
     LOGV("exit");
 
-    return 1;
+    if (socketFd >= 0) close(socketFd);
+    if (commandReadFd >= 0) close(commandReadFd);
+    if (responseWriteFd >= 0) close(responseWriteFd);
+    if (get_tun_fd() >= 0) close(get_tun_fd());
+
+    return 0;
 }

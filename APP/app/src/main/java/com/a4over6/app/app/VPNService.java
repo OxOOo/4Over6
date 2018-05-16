@@ -3,6 +3,7 @@ package com.a4over6.app.app;
 import android.content.Intent;
 import android.net.VpnService;
 import android.os.ParcelFileDescriptor;
+import android.support.v4.content.LocalBroadcastManager;
 import android.util.Log;
 
 import java.io.DataInputStream;
@@ -12,10 +13,16 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.util.Arrays;
+import java.util.Timer;
+import java.util.TimerTask;
 
 public class VPNService extends VpnService {
-    private Thread vpnThread;
-    private ParcelFileDescriptor vpnInterface;
+    public static String BROADCAST_STATE = "com.a4over6.app.app.BOARDCAST_STATE";
+
+    private Thread vpnThread = null;
+    private ParcelFileDescriptor vpnInterface = null;
+    private Timer timer = null;
+    private static VPNService instance = null;
 
     private ParcelFileDescriptor commandWriteFd;
     private ParcelFileDescriptor commandReadFd;
@@ -25,16 +32,39 @@ public class VPNService extends VpnService {
     private DataInputStream responseReadStream;
     private DataOutputStream commandWriteStream;
 
+    private String virtual_ipv4_addr;
+    private long in_bytes;
+    private long out_bytes;
+    private long in_packets;
+    private long out_packets;
+    private long in_speed_bytes;
+    private long out_speed_bytes;
+    private long running_time;
+
     @Override
     public void onCreate() {
         super.onCreate();
     }
 
     @Override
-    public int onStartCommand(Intent intent, int flags, int startId) {
+    public int onStartCommand(final Intent intent, int flags, int startId) {
         Log.d("debug", "onStartCommand");
 
-        startVPN(intent.getStringExtra("hostname"));
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                if (intent.getStringExtra("command").equals("start")) {
+                    Log.d("onStartCommand", "starting");
+                    startVPN(intent.getStringExtra("hostname"), intent.getIntExtra("port", 0));
+                    VPNService.instance = VPNService.this;
+                } else {
+                    Log.d("onStartCommand", "stopping");
+                    if (VPNService.instance != null) VPNService.instance.stopVPN();
+                    VPNService.instance = null;
+                }
+                broadcastState();
+            }
+        }).start();
 
         return START_REDELIVER_INTENT;
     }
@@ -44,6 +74,7 @@ public class VPNService extends VpnService {
         int offset = 0;
         while(offset < length) {
             int read = responseReadStream.read(data, offset, length-offset);
+            if (read < 0) throw new IOException("read fail");
             offset += read;
         }
         return data;
@@ -56,6 +87,11 @@ public class VPNService extends VpnService {
         int d = s.read();
         return ((d*256+c)*256+b)*256+a;
     }
+    private long readLong(DataInputStream s) throws IOException {
+        long a = (long)readInt(s);
+        long b = (long)readInt(s);
+        return (b<<32)+a;
+    }
     private void writeInt(DataOutputStream s, int data) throws IOException {
         int a = data%256; data /= 256;
         int b = data%256; data /= 256;
@@ -64,8 +100,32 @@ public class VPNService extends VpnService {
         s.write(a);s.write(b);s.write(c);s.write(d);
     }
 
-    private int startVPN(String hostname) {
+    private void broadcastState() {
+        Intent intent = new Intent(BROADCAST_STATE);
+        intent.putExtra("running_state", (vpnThread != null && vpnThread.isAlive()) ? 1 : 0);
+        intent.putExtra("virtual_ipv4_addr", virtual_ipv4_addr);
+        intent.putExtra("in_bytes", in_bytes);
+        intent.putExtra("out_bytes", out_bytes);
+        intent.putExtra("in_packets", in_packets);
+        intent.putExtra("out_packets", out_packets);
+        intent.putExtra("in_speed_bytes", in_speed_bytes);
+        intent.putExtra("out_speed_bytes", out_speed_bytes);
+        intent.putExtra("running_time", running_time);
+
+        LocalBroadcastManager.getInstance(this).sendBroadcast(intent);
+    }
+
+    private int startVPN(String hostname, int port) {
         stopVPN();
+
+        virtual_ipv4_addr = null;
+        in_bytes = 0;
+        out_bytes = 0;
+        in_packets = 0;
+        out_packets = 0;
+        in_speed_bytes = 0;
+        out_speed_bytes = 0;
+        running_time = 0;
 
         try {
             ParcelFileDescriptor[] pipeFds = ParcelFileDescriptor.createPipe();
@@ -79,8 +139,7 @@ public class VPNService extends VpnService {
             return -1;
         }
 
-        //vpnThread = new Thread(new VPNThread("2402:f000:1:440b:1618:77ff:fe2d:fbc4", 5678, commandReadFd.getFd(), responseWriteFd.getFd()));
-        vpnThread = new Thread(new VPNThread(hostname, 5678, commandReadFd.getFd(), responseWriteFd.getFd()));
+        vpnThread = new Thread(new VPNThread(hostname, port, commandReadFd.getFd(), responseWriteFd.getFd()));
         vpnThread.start();
 
         commandWriteStream = new DataOutputStream(new FileOutputStream(commandWriteFd.getFileDescriptor()));
@@ -108,30 +167,73 @@ public class VPNService extends VpnService {
             commandWriteStream.writeByte(IPC.IPC_COMMAND_SET_TUN);
             writeInt(commandWriteStream, vpnInterface.getFd());
             protect(socketFd);
+
+            virtual_ipv4_addr = address.getHostAddress();
         } catch (IOException e) {
             e.printStackTrace();
             return -1;
         }
 
+        TimerTask timer_task = new TimerTask() {
+            public void run() {
+                running_time ++;
+
+                if (!vpnThread.isAlive()) {
+                    stopVPN();
+                } else {
+                    try {
+                        commandWriteStream.writeByte(IPC.IPC_COMMAND_FETCH_STATE);
+                        long old_in_bytes = in_bytes;
+                        long old_out_bytes = out_bytes;
+                        in_bytes = readLong(responseReadStream);
+                        out_bytes = readLong(responseReadStream);
+                        in_packets = readLong(responseReadStream);
+                        out_packets = readLong(responseReadStream);
+                        in_speed_bytes = in_bytes - old_in_bytes;
+                        out_speed_bytes = out_bytes - old_out_bytes;
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
+                }
+                broadcastState();
+            }
+        };
+
+        timer = new Timer();
+        timer.scheduleAtFixedRate(timer_task, 1000, 1000);
+
         return 0;
     }
 
     private void stopVPN() {
+        if (timer != null) {
+            timer.cancel();
+        }
+        timer = null;
+
         if (vpnThread != null && vpnThread.isAlive()) {
             try {
                 commandWriteStream.writeByte(IPC.IPC_COMMAND_EXIT);
-                vpnInterface.close();
+                vpnThread.join(10000);
                 commandWriteStream.close();
                 responseReadStream.close();
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
-            try {
-                vpnThread.join(2000);
             } catch (InterruptedException e) {
+                e.printStackTrace();
+            } catch (IOException e) {
                 e.printStackTrace();
             }
         }
         vpnThread = null;
+
+        if (vpnInterface != null) {
+            try {
+                vpnInterface.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+        vpnInterface = null;
+
+        stopSelf();
     }
 }
