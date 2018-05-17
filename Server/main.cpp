@@ -372,8 +372,8 @@ void process_client(int client_fd, int tun_fd, int epoll_fd) {
     // read data from client
     size = read(client_fd, buf+nread, BUF_SIZE-nread);
 
-    if (size < 0) {
-        if (errno == ECONNRESET) {
+    if (size <= 0) {
+        if (errno == ECONNRESET || size == 0) {
             printf("Connection ternimated\n");
         } else {
             printf("Error: error at read client:%s\n", strerror(errno));
