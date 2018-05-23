@@ -23,8 +23,8 @@
 #define MAX_CLIENTS         256 // index 0 and index 255 are invalid
 #define MAX_FDS             2048
 #define EPOLL_MAX_EVENTS    MAX_FDS
-#define HARTBEAT_INTERVAL   20
-#define HARTBEAT_TIMEOUT    60
+#define HEARTBEAT_INTERVAL   20
+#define HEARTBEAT_TIMEOUT    60
 #define BUF_SIZE            65536
 
 #define EPOLL_EVENTS        (EPOLLIN|EPOLLERR|EPOLLHUP)
@@ -55,8 +55,8 @@ typedef struct user_info {
     int is_free;
 
     int fd; // -1 means none
-    time_t last_hartbeat_sent_secs;
-    time_t last_hartbeat_recved_secs;
+    time_t last_heartbeat_sent_secs;
+    time_t last_heartbeat_recved_secs;
     struct in_addr v4addr;
     struct in6_addr v6addr;
 } user_info;
@@ -169,8 +169,8 @@ int allocate_ip_addr(int client_fd) {
             users[i].is_free = 0;
 
             users[i].fd = client_fd;
-            users[i].last_hartbeat_sent_secs = time(0);
-            users[i].last_hartbeat_recved_secs = time(0);
+            users[i].last_heartbeat_sent_secs = time(0);
+            users[i].last_heartbeat_recved_secs = time(0);
             inet_pton(AF_INET, users[i].addr, (void *)&users[i].v4addr);
 
             struct sockaddr_in6 clientaddr;
@@ -430,7 +430,7 @@ void process_client(int client_fd, int tun_fd, int epoll_fd) {
             printf("client keep-alive\n");
 
             int id = search_user_info_by_fd(client_fd);
-            users[id].last_hartbeat_recved_secs = time(0);
+            users[id].last_heartbeat_recved_secs = time(0);
         }
         else {
             printf("Warning: unknown type of data from client fd %d\n", client_fd);
@@ -442,20 +442,20 @@ void process_client(int client_fd, int tun_fd, int epoll_fd) {
     }
 }
 
-void process_hartbeat(int epoll_fd) {
+void process_heartbeat(int epoll_fd) {
     for(int i = 0; i < MAX_CLIENTS; i ++)
         if (users[i].fd >= 0 && !users[i].is_free) {
             time_t now = time(0);
-            if (now - users[i].last_hartbeat_sent_secs > HARTBEAT_INTERVAL) {
-                message hartbeat;
-                hartbeat.type = TYPE_KEEPALIVE;
-                hartbeat.length = sizeof(message);
-                if (write_all(users[i].fd, &hartbeat, sizeof(message)) != sizeof(message)) {
-                    printf("Error: fail to send hartbeat packet\n");
+            if (now - users[i].last_heartbeat_sent_secs > HEARTBEAT_INTERVAL) {
+                message heartbeat;
+                heartbeat.type = TYPE_KEEPALIVE;
+                heartbeat.length = sizeof(message);
+                if (write_all(users[i].fd, &heartbeat, sizeof(message)) != sizeof(message)) {
+                    printf("Error: fail to send heartbeat packet\n");
                 }
-                users[i].last_hartbeat_sent_secs = now;
+                users[i].last_heartbeat_sent_secs = now;
             }
-            if (now - users[i].last_hartbeat_recved_secs > HARTBEAT_TIMEOUT) {
+            if (now - users[i].last_heartbeat_recved_secs > HEARTBEAT_TIMEOUT) {
                 free_client_fd(users[i].fd, epoll_fd);
             }
         }
@@ -539,7 +539,7 @@ int main(int argc, char **argv) {
             }
         }
 
-        process_hartbeat(epoll_fd);
+        process_heartbeat(epoll_fd);
 
         fflush(stdout);
     }

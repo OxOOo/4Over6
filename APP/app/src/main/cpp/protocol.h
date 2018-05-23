@@ -5,8 +5,8 @@
 #ifndef APP_PROTOCOL_H
 #define APP_PROTOCOL_H
 
-#define HARTBEAT_TIMEOUT_SECS 60
-#define HARTBEAT_INTERVAL_SECS 20
+#define HEARTBEAT_TIMEOUT_SECS 60
+#define HEARTBEAT_INTERVAL_SECS 20
 
 #define IPC_COMMAND_EXIT 1 // 退出命令
 #define IPC_COMMAND_FETCH_CONFIG 2 // 获取IP配置信息
@@ -28,6 +28,6 @@ int handle_socket();
 int handle_command();
 
 // 处理心跳
-int handle_hartbeat();
+int handle_heartbeat();
 
 #endif //APP_PROTOCOL_H

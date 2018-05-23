@@ -19,7 +19,7 @@ using namespace std;
 #define PROTOCOL_IP_REPLY 101
 #define PROTOCOL_PACKET_SEND 102
 #define PROTOCOL_PACKET_RECV 103
-#define PROTOCOL_HARTBEAT 104
+#define PROTOCOL_HEARTBEAT 104
 typedef struct
 {
     int length;
@@ -35,8 +35,8 @@ static int commandReadFd;
 static int responseWriteFd;
 static int tunFd;
 
-static time_t last_hartbeat_from_server;
-static time_t last_hartbeat_to_server;
+static time_t last_heartbeat_from_server;
+static time_t last_heartbeat_to_server;
 
 uint64_t in_bytes;
 uint64_t out_bytes;
@@ -54,8 +54,8 @@ int protocol_init(int _socketFd, int _commandReadFd, int _responseWriteFd)
     responseWriteFd = _responseWriteFd;
     tunFd = -1;
 
-    last_hartbeat_from_server = time(NULL);
-    last_hartbeat_to_server = time(NULL);
+    last_heartbeat_from_server = time(NULL);
+    last_heartbeat_to_server = time(NULL);
 
     socket_nreads = 0;
 
@@ -133,9 +133,9 @@ int handle_socket()
             ASSERT(write(responseWriteFd, dns2, 4) == 4, fail);
             ASSERT(write(responseWriteFd, dns3, 4) == 4, fail);
             ASSERT(write(responseWriteFd, &socketFd, 4) == 4, fail);
-        } else if (msg.type == PROTOCOL_HARTBEAT) {
-            LOGV("PROTOCOL_HARTBEAT");
-            last_hartbeat_from_server = time(NULL);
+        } else if (msg.type == PROTOCOL_HEARTBEAT) {
+            LOGV("PROTOCOL_HEARTBEAT");
+            last_heartbeat_from_server = time(NULL);
         } else if (msg.type == PROTOCOL_PACKET_RECV) {
             LOGV("PROTOCOL_PACKET_RECV");
             if (tunFd >= 0) {
@@ -201,16 +201,16 @@ int handle_command()
     return -1;
 }
 
-int handle_hartbeat()
+int handle_heartbeat()
 {
     time_t now = time(NULL);
-    if (now - last_hartbeat_from_server > HARTBEAT_TIMEOUT_SECS) return -1;
-    if (now - last_hartbeat_to_server > HARTBEAT_INTERVAL_SECS) {
+    if (now - last_heartbeat_from_server > HEARTBEAT_TIMEOUT_SECS) return -1;
+    if (now - last_heartbeat_to_server > HEARTBEAT_INTERVAL_SECS) {
         Message msg;
         msg.length = sizeof(Message);
-        msg.type = PROTOCOL_HARTBEAT;
+        msg.type = PROTOCOL_HEARTBEAT;
         ASSERT(write(socketFd, &msg, sizeof(msg)) == sizeof(msg), fail);
-        last_hartbeat_to_server = now;
+        last_heartbeat_to_server = now;
     }
 
     return 0;

@@ -73,8 +73,8 @@ int vpn_main(const std::string hostname, int port, int commandReadFd, int respon
 
         int ret = poll(fds.data(), fds.size(), 1000);
         ERROR_CHECK(ret, exit);
-        if (handle_hartbeat() != 0) {
-            LOGI("exit because of hartbeat timeout");
+        if (handle_heartbeat() != 0) {
+            LOGI("exit because of heartbeat timeout");
             goto exit;
         }
 
